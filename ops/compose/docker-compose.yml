@@ -1,0 +1,317 @@
+# =============================================================================
+# Governance platform base stack (work order T-1, execution manual §4.2).
+# All images pinned to verified minor/patch tags. All secrets come from .env
+# (generated from .env.example by ops/scripts/bootstrap.sh).
+#
+# Exposure policy:
+#   public (via Caddy TLS): bao / zot / litellm / langfuse / restate  (+ api later)
+#   loopback only          : postgres (5432), restate admin (9070)
+#   internal only          : kafka, opa, minio, redis, clickhouse, langfuse-worker
+# =============================================================================
+name: company
+
+x-logging: &default-logging
+  driver: json-file
+  options: { max-size: "20m", max-file: "5" }
+
+services:
+  # ------------------------------------------------------------------ PG 16
+  pg:
+    image: docker.io/library/postgres:16.15
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # consumed by ops/sql/001_databases.sh on FIRST boot only
+      KERNEL_PG_PASSWORD: ${KERNEL_PG_PASSWORD}
+      LITELLM_PG_PASSWORD: ${LITELLM_PG_PASSWORD}
+      LANGFUSE_PG_PASSWORD: ${LANGFUSE_PG_PASSWORD}
+    volumes:
+      - /opt/company/data/pg:/var/lib/postgresql/data
+      - ../sql:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d company"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ------------------------------------------------------- Kafka (KRaft) ---
+  kafka:
+    image: docker.io/apache/kafka:4.3.1
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9073
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9073
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: ciQZhZTSRZWg-7HvrBuk0Q # static single-node cluster id
+    volumes:
+      - /opt/company/data/kafka:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+
+  # One-shot topic provisioning (idempotent; re-runs are safe).
+  kafka-init:
+    image: docker.io/apache/kafka:4.3.1
+    restart: "no"
+    logging: *default-logging
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        BS="--bootstrap-server kafka:9092"
+        /opt/kafka/bin/kafka-topics.sh $$BS --create --if-not-exists \
+          --topic audit-events --partitions 3 --config retention.ms=-1
+        /opt/kafka/bin/kafka-topics.sh $$BS --create --if-not-exists \
+          --topic decisions --partitions 1 --config cleanup.policy=compact
+        /opt/kafka/bin/kafka-topics.sh $$BS --list
+
+  # ------------------------------------------------------------- Restate ---
+  restate:
+    image: docker.io/restatedev/restate:1.7.10
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["--http-port=8080", "--admin-port=9070", "--node-name=srv-1"]
+    volumes:
+      - /opt/company/data/restate:/restate-data
+    ports:
+      - "127.0.0.1:9070:9070" # admin API, loopback only
+    # ingress 8080 is internal-only; exposed via Caddy restate.<DOMAIN>
+
+  # ------------------------------------------------------------------ OPA ---
+  opa:
+    image: docker.io/openpolicyagent/opa:1.20.2-static
+    restart: unless-stopped
+    logging: *default-logging
+    # Policies are loaded from ../opa (CI builds the bundle from the kernel
+    # repo policies/ and drops it here). Internal only — never proxied.
+    command:
+      ["run", "--server", "--addr=:8181", "--log-level=error", "/policies"]
+    volumes:
+      - ../opa:/policies:ro
+
+  # -------------------------------------------------------------- OpenBao ---
+  bao:
+    image: docker.io/openbao/openbao:2.6.2
+    restart: unless-stopped
+    logging: *default-logging
+    cap_add:
+      - IPC_LOCK
+    command: ["server", "-config=/openbao/config/local.hjson"]
+    volumes:
+      - /opt/company/data/bao:/openbao/file
+      - ../bao/config.hjson:/openbao/config/local.hjson:ro
+    # Exposed via Caddy bao.<DOMAIN>; bootstrap inits/unseals via `docker compose exec`.
+    healthcheck:
+      # wget exit 0 = unsealed-ok, exit 8 = HTTP error status (sealed/standby)
+      # — both mean the API is reachable.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8200/v1/sys/health || [ $$? -eq 8 ]"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # -------------------------------------------------------------- LiteLLM ---
+  litellm:
+    image: ghcr.io/berriai/litellm-database:main-v1.26.13
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      DATABASE_URL: postgresql://litellm:${LITELLM_PG_PASSWORD}@pg:5432/litellm
+      STORE_MODEL_IN_DB: "True"
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      # Provider keys are injected from .env (filled on the server, never committed)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      MOONSHOT_API_KEY: ${MOONSHOT_API_KEY:-}
+    volumes:
+      - ../litellm/config.yaml:/app/config.yaml:ro
+    depends_on:
+      pg:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health/liveliness"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+
+  # ------------------------------------------------------------------ Zot ---
+  zot:
+    image: ghcr.io/project-zot/zot-linux-amd64:v2.1.21
+    restart: unless-stopped
+    logging: *default-logging
+    volumes:
+      - /opt/company/data/zot:/var/lib/zot
+      - ../zot/config.json:/etc/zot/config.json:ro
+    # Exposed via Caddy zot.<DOMAIN> (Caddy-level basic auth).
+
+  # --------------------------------------------------- Langfuse substack ----
+  clickhouse:
+    image: docker.io/clickhouse/clickhouse-server:25.12
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    volumes:
+      - /opt/company/data/clickhouse:/var/lib/clickhouse
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+
+  minio:
+    image: docker.io/minio/minio:RELEASE.2025-01-20T14-49-07Z
+    # NOTE: tag believed-valid at authoring time; if pull fails verify at
+    # https://hub.docker.com/r/minio/minio/tags and pin the current release.
+    restart: unless-stopped
+    logging: *default-logging
+    command: server --address ":9000" --console-address ":9001" /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - /opt/company/data/minio:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: docker.io/library/redis:7.4
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["redis-server", "--requirepass", "${REDIS_AUTH}"]
+    volumes:
+      - /opt/company/data/redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_AUTH\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  langfuse-worker:
+    image: docker.io/langfuse/langfuse-worker:4.36.1
+    restart: unless-stopped
+    logging: *default-logging
+    environment: &langfuse-env
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_PG_PASSWORD}@pg:5432/langfuse
+      SALT: ${SALT}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      CLICKHOUSE_MIGRATION_URL: clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: ${REDIS_AUTH}
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000 # browser media upload needs a public S3 endpoint; set to https://lfstore.<DOMAIN> if added later
+      LANGFUSE_S3_MEDIA_UPLOAD_INTERNAL_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+      TELEMETRY_ENABLED: "false"
+    depends_on:
+      pg: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      minio: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  langfuse-web:
+    image: docker.io/langfuse/langfuse:4.36.1
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
+    depends_on:
+      pg: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      minio: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      langfuse-worker: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/public/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 15
+
+  # ---------------------------------------------------------------- Caddy ---
+  caddy:
+    image: docker.io/library/caddy:2.11.4
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+      ZOT_USER: ${ZOT_USER}
+      ZOT_PASS_BCRYPT: ${ZOT_PASS_BCRYPT}
+    volumes:
+      - ../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      bao: { condition: service_started }
+      zot: { condition: service_started }
+      litellm: { condition: service_started }
+      langfuse-web: { condition: service_started }
+      restate: { condition: service_started }
+
+  # ------------------------------------------------ Action gateway (WO-03) --
+  # Uncomment when the kernel gateway container ships (manual chapter 5).
+  # gateway:
+  #   image: ghcr.io/cloudcrane-software/kernel-gateway:0.1.0
+  #   restart: unless-stopped
+  #   environment:
+  #     KERNEL_PG_DSN: postgresql://kernel:${KERNEL_PG_PASSWORD}@pg:5432/company
+  #     OPA_URL: http://opa:8181
+  #   depends_on:
+  #     pg: { condition: service_healthy }
+  #     opa: { condition: service_started }
+
+volumes:
+  caddy_data:
+  caddy_config:

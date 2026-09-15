@@ -1,0 +1,13 @@
+// OpenBao server config (file storage, TLS terminated at Caddy).
+storage "file" {
+  path = "/openbao/file"
+}
+listener "tcp" {
+  address = "0.0.0.0:8200"
+  tls_disable = 1
+}
+ui = true
+api_addr = "https://bao.example.com"
+// api_addr is informational; set the real domain on the server if needed.
+cluster_addr = "https://127.0.0.1:8201"
+disable_clustering = true
