@@ -300,6 +300,23 @@ services:
       langfuse-web: { condition: service_started }
       restate: { condition: service_started }
 
+  # ---------------------------------------------------- JiuwenBox sandbox ---
+  # Ephemeral agent sandbox (manual §4.3). Egress default-deny; whitelist is
+  # ONLY the action gateway + LiteLLM. Started via the `sandbox` profile:
+  #   docker compose ... --profile sandbox up -d jiuwenbox
+  # Image pinned via JIWUENBOX_IMAGE in .env (match your openJiuWen release).
+  jiuwenbox:
+    image: ${JIWUENBOX_IMAGE:?set JIWUENBOX_IMAGE in .env}
+    restart: unless-stopped
+    profiles: ["sandbox"]
+    logging: *default-logging
+    network_mode: "none" # the manager itself holds no egress; sessions are isolated
+    volumes:
+      - ../jiuwenbox/config.yaml:/etc/jiuwenbox/config.yaml:ro
+      - jiuwenbox-data:/var/lib/jiuwenbox
+    depends_on:
+      - litellm
+
   # ------------------------------------------------ Action gateway (WO-03) --
   # Uncomment when the kernel gateway container ships (manual chapter 5).
   # gateway:
@@ -315,3 +332,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  jiuwenbox-data:
