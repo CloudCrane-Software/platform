@@ -300,6 +300,37 @@ services:
       langfuse-web: { condition: service_started }
       restate: { condition: service_started }
 
+  # -------------------------------------------------- TigerBeetle (WO-05) ---
+  # Budget ledger engine. Data file must be formatted once before first run:
+  #   docker compose exec tigerbeetle ./tigerbeetle format --cluster=0 \
+  #     --replica=0 --replica-count=1 /data/0_0.tigerbeetle
+  # (bootstrap.sh does this automatically via the tb-init one-shot service).
+  tigerbeetle:
+    image: docker.io/tigerbeetle/tigerbeetle:0.17.9
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["start", "--addresses=0.0.0.0:3000", "/data/0_0.tigerbeetle"]
+    volumes:
+      - /opt/company/data/tb:/data
+    # internal only — never published; kernel connects in-stack
+
+  tb-init:
+    image: docker.io/tigerbeetle/tigerbeetle:0.17.9
+    restart: "no"
+    logging: *default-logging
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        if [ ! -f /data/0_0.tigerbeetle ]; then
+          ./tigerbeetle format --cluster=0 --replica=0 --replica-count=1 /data/0_0.tigerbeetle
+        else
+          echo "tigerbeetle data file already formatted"
+        fi
+    volumes:
+      - /opt/company/data/tb:/data
+    depends_on: []
+
   # ---------------------------------------------------- JiuwenBox sandbox ---
   # Ephemeral agent sandbox (manual §4.3). Egress default-deny; whitelist is
   # ONLY the action gateway + LiteLLM. Started via the `sandbox` profile:

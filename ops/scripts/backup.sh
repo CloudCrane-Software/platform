@@ -34,7 +34,7 @@ log "pg_dumpall -> $DEST/pg_all.sql.gz"
 SEALED="$(cd "$ROOT" && "${COMPOSE[@]}" exec -T bao bao status 2>/dev/null | grep -c 'Sealed.*true' || echo unknown)"
 echo "bao sealed at backup time: $SEALED" > "$DEST/NOTE-bao-seal-state.txt"
 
-for d in pg bao restate kafka zot clickhouse minio redis; do
+for d in pg bao restate kafka zot clickhouse minio redis tb; do
     SRC="/opt/company/data/$d"
     [[ -d "$SRC" ]] || continue
     log "tar $SRC -> $DEST/$d.tar.gz"
