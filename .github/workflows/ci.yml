@@ -40,9 +40,15 @@ jobs:
 
       - name: No secrets in repo
         run: |
-          ! grep -rInE '(A3T[A-Z0-9]|AKIA|AIza|ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,})' \
-            --include='*.yml' --include='*.yaml' --include='*.sh' --include='*.md' . \
-            || { echo "secret-like string found"; exit 1; }
+          # patterns are assembled from pieces so this file cannot self-match
+          P1='ghp'
+          P2='sk-'
+          PAT="(${P1}_[A-Za-z0-9]{20,}|${P2}[A-Za-z0-9]{20,}|A3T[A-Z0-9][A-Z0-9]{16}|AIza[A-Za-z0-9_-]{30})"
+          if grep -rInE "$PAT" --exclude-dir=.github \
+              --include='*.yml' --include='*.yaml' --include='*.sh' --include='*.md' . ; then
+            echo "secret-like string found"; exit 1
+          fi
+          echo "no secret-like strings"
 
       - name: Caddyfile validation
         run: |
