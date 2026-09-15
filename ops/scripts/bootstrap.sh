@@ -73,7 +73,7 @@ if [[ "$ZOT_PASS_BCRYPT" == __GEN_ZOT_BCRYPT__* ]]; then
 fi
 
 # ------------------------------------------------------------- 3. dirs -----
-for d in pg restate kafka bao zot clickhouse minio redis; do
+for d in pg restate kafka bao zot clickhouse minio redis tb; do
     mkdir -p "/opt/company/data/$d"
 done
 mkdir -p /opt/company/backups
@@ -120,6 +120,9 @@ if [[ -n "$BAO_ROOT" ]]; then
 fi
 
 # ------------------------------------------------------- 6. Kafka topics ---
+log "formatting tigerbeetle data file (if needed)"
+"${COMPOSE[@]}" run --rm tb-init >/dev/null
+
 log "provisioning kafka topics (audit-events, decisions)"
 "${COMPOSE[@]}" run --rm kafka-init >/dev/null
 log "topics ready"
