@@ -1,0 +1,44 @@
+# JiuwenBox sandbox configuration (manual §4.3).
+#
+# Two non-negotiable properties:
+#   1. egress default-deny — the ONLY outbound destinations are the action
+#      gateway and the LiteLLM sub-gateway; everything else is refused.
+#   2. LLM privacy-proxy mode — real provider keys never enter the sandbox;
+#      the proxy (sidecar reading OpenBao) injects them upstream. The sandbox
+#      sees placeholder keys only.
+#
+# The sandbox is EPHEMERAL: created per task, destroyed on stop.
+
+sandbox:
+  mode: SANDBOX            # agent code execution always sandboxed
+  fallback_on_failure: false
+  lifecycle:
+    on_stop: delete        # task end => destroy
+    idle_ttl: 15m
+
+network:
+  mode: isolated
+  egress:
+    default: deny
+    allow:
+      - host: api.${DOMAIN}
+        port: 443
+        proto: tcp
+        purpose: action-gateway   # the ONLY door for external side effects
+      - host: litellm.${DOMAIN}
+        port: 443
+        proto: tcp
+        purpose: llm-subgateway   # LLM calls via LiteLLM, never direct
+
+llm_privacy_proxy:
+  enabled: true
+  upstream: https://litellm.${DOMAIN}/v1
+  key_source: openbao:transit        # real keys resolved by the proxy from OpenBao
+  sandbox_key: "PLACEHOLDER-ONLY"    # injected into the sandbox; never a real key
+
+# Provider/launcher extension point: gVisor strong-isolation tier (WO-104/M2)
+providers:
+  default: docker
+  # gvisor:
+  #   runtime: runsc
+  #   launcher: KgtGvisorLauncher

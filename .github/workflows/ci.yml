@@ -21,8 +21,10 @@ jobs:
           cp .env.example .env.ci
           # neutralize generated markers with dummy values for validation
           sed -i -E 's/__GEN_[A-Z_]+__/dummyvalue/g' .env.ci
-          # DOMAIN/ACME_EMAIL must look real for compose interpolation (no syntax role)
-          docker compose --env-file .env.ci -f docker-compose.yml config >/dev/null
+          # JIWUENBOX_IMAGE is deliberately required (fail-fast at deploy);
+          # give CI a dummy so the rest of the file still validates
+          JIWUENBOX_IMAGE=example.invalid/jiuwenbox:0 \
+            docker compose --env-file .env.ci -f docker-compose.yml config >/dev/null
           echo "compose config OK"
 
       - name: Image tag pinning guard
