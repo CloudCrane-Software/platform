@@ -1,0 +1,57 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shellcheck
+        run: |
+          # fail on any script issues (bash strict-mode scripts)
+          shellcheck --severity=error ops/scripts/*.sh ops/sql/*.sh
+
+      - name: Compose config validation
+        run: |
+          cd ops/compose
+          cp .env.example .env.ci
+          # neutralize generated markers with dummy values for validation
+          sed -i -E 's/__GEN_[A-Z_]+__/dummyvalue/g' .env.ci
+          # DOMAIN/ACME_EMAIL must look real for compose interpolation (no syntax role)
+          docker compose --env-file .env.ci -f docker-compose.yml config >/dev/null
+          echo "compose config OK"
+
+      - name: Image tag pinning guard
+        run: |
+          cd ops/compose
+          python3 - <<'EOF'
+          import re, sys
+          text = open("docker-compose.yml").read()
+          images = re.findall(r"image:\s*(\S+)", text)
+          bad = [i for i in images if "@" not in i and not re.search(r":[^/:]+(\s|$)", i)]
+          if bad:
+              sys.exit(f"unpinned image tags: {bad}")
+          print(f"all {len(images)} images pinned")
+          EOF
+
+      - name: No secrets in repo
+        run: |
+          # patterns are assembled from pieces so this file cannot self-match
+          P1='ghp'
+          P2='sk-'
+          PAT="(${P1}_[A-Za-z0-9]{20,}|${P2}[A-Za-z0-9]{20,}|A3T[A-Z0-9][A-Z0-9]{16}|AIza[A-Za-z0-9_-]{30})"
+          if grep -rInE "$PAT" --exclude-dir=.github \
+              --include='*.yml' --include='*.yaml' --include='*.sh' --include='*.md' . ; then
+            echo "secret-like string found"; exit 1
+          fi
+          echo "no secret-like strings"
+
+      - name: Caddyfile validation
+        run: |
+          docker run --rm -v "$PWD/ops/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            -e DOMAIN=example.com -e ACME_EMAIL=a@b.c -e ZOT_USER=u -e 'ZOT_PASS_BCRYPT=$2a$10$ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345678012345678012345678012345' \
+            caddy:2.11.4 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

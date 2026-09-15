@@ -1,0 +1,46 @@
+# Caddy reverse proxy for the governance platform base stack.
+# All six subdomains get automatic TLS. Internal-only services
+# (PG/Kafka/OPA) are NEVER exposed here — only the six below + api.
+#
+# DOMAIN is substituted from the environment via caddy's env vars
+# (docker compose sets DOMAIN from .env). Run container with
+#   command: caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+# and env DOMAIN=example.com so {$DOMAIN} resolves.
+
+{
+	email {$ACME_EMAIL}
+}
+
+# --- Action gateway (kernel Chapter 5) ---------------------------------
+# Uncomment after gateway container is deployed (WO-03).
+# api.{$DOMAIN} {
+# 	reverse_proxy gateway:8000
+# }
+
+# --- OpenBao (secrets + transit signing) --------------------------------
+bao.{$DOMAIN} {
+	reverse_proxy bao:8200
+}
+
+# --- Zot container registry ---------------------------------------------
+zot.{$DOMAIN} {
+	basic_auth {
+		{$ZOT_USER} {$ZOT_PASS_BCRYPT}
+	}
+	reverse_proxy zot:5000
+}
+
+# --- LiteLLM (LLM sub-gateway, weekly budget windows) -------------------
+litellm.{$DOMAIN} {
+	reverse_proxy litellm:4000
+}
+
+# --- Langfuse (usage tracing UI) ----------------------------------------
+langfuse.{$DOMAIN} {
+	reverse_proxy langfuse-web:3000
+}
+
+# --- Restate (workflow engine, admin/ingress) ---------------------------
+restate.{$DOMAIN} {
+	reverse_proxy restate:8080
+}
