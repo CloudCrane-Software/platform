@@ -91,7 +91,12 @@ services:
     image: docker.io/restatedev/restate:1.7.10
     restart: unless-stopped
     logging: *default-logging
-    command: ["--http-port=8080", "--admin-port=9070", "--node-name=srv-1"]
+    environment:
+      RESTATE_BIND_IP: 0.0.0.0
+      RESTATE_HTTP_INGRESS_BIND_PORT: "8080"
+      RESTATE_ADMIN_BIND_PORT: "9070"
+      RESTATE_NODE_NAME: srv-edge-1
+      RESTATE_BASE_DIR: /restate-data
     volumes:
       - /opt/company/data/restate:/restate-data
     ports:
@@ -175,6 +180,7 @@ services:
       CLICKHOUSE_DB: default
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"  # single node: plain MergeTree, not Replicated
     volumes:
       - /opt/company/data/clickhouse:/var/lib/clickhouse
     ulimits:
@@ -208,6 +214,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     command: ["redis-server", "--requirepass", "${REDIS_AUTH}"]
+    environment:
+      REDIS_AUTH: ${REDIS_AUTH}  # used by the healthcheck below
     volumes:
       - /opt/company/data/redis:/data
     healthcheck:
@@ -228,6 +236,7 @@ services:
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"  # single node: plain MergeTree, not Replicated
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_AUTH: ${REDIS_AUTH}
