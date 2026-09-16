@@ -1,0 +1,9 @@
+# edge-server co-location override (ADR 0004): the host nginx already owns
+# port 80; Caddy publishes 443 only (ACME via TLS-ALPN-01, no HTTP-01).
+# Usage: docker compose -f docker-compose.yml -f docker-compose.edge.yml ...
+name: company
+services:
+  caddy:
+    ports: !override
+      - "443:443"
+      - "443:443/udp"
