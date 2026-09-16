@@ -341,7 +341,9 @@ services:
     restart: unless-stopped
     profiles: ["sandbox"]
     logging: *default-logging
-    network_mode: "none" # the manager itself holds no egress; sessions are isolated
+    # manager sits on the internal network to reach api/litellm for session
+    # supervision; individual SESSIONS get the isolated, default-deny egress
+    # policy from ops/jiuwenbox/config.yaml (network.mode: isolated)
     volumes:
       - ../jiuwenbox/config.yaml:/etc/jiuwenbox/config.yaml:ro
       - jiuwenbox-data:/var/lib/jiuwenbox
