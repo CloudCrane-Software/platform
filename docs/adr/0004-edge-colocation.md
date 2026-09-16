@@ -21,3 +21,17 @@ production services (client website on nginx :80) and has 7.4G RAM + 4G swap.
   docker; nginx and client sites untouched.
 - If memory pressure appears, migration path = rent srv-1, re-point the 12
   DNS records, re-run bootstrap there (data via backup.sh restore).
+
+## Deployment findings (2026-09-16, first live run)
+- Restate 1.7 dropped `--http-port/--admin-port` CLI flags → env config
+  (RESTATE_HTTP_INGRESS_BIND_PORT/RESTATE_ADMIN_BIND_PORT).
+- Redis healthcheck needs REDIS_AUTH visible in-container env.
+- Langfuse v4 needs CLICKHOUSE_CLUSTER_ENABLED=false on single-node CH.
+- TigerBeetle requires io_uring: docker default seccomp blocks it →
+  `security_opt: [seccomp:unconfined]` for its services only.
+- Wildcard :443 host bind is impossible (hf-sni-router holds 127.0.0.1/[::1]:443
+  specific binds) → caddy binds EDGE_IPV4/EDGE_IPV6 explicitly.
+- Image pulls: tigerbeetle via ghcr + retag; minio RELEASE pins via
+  docker.m.daocloud.io + retag (tencent mirror denies both paths).
+- compose relative bind-mounts resolve from --project-directory: run from
+  ops/compose/ or pass explicit project dir matching the repo layout.
