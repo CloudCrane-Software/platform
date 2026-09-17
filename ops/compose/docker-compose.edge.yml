@@ -1,9 +1,40 @@
-# edge-server co-location override (ADR 0004): the host nginx already owns
-# port 80; Caddy publishes 443 only (ACME via TLS-ALPN-01, no HTTP-01).
-# Usage: docker compose -f docker-compose.yml -f docker-compose.edge.yml ...
+# edge-server co-location override (ADR 0004):
+# - host nginx owns :80 -> caddy 443 only (ACME TLS-ALPN-01)
+# - host loopback :443 is held by hf-sni-router (127.0.0.1/[::1] specific
+#   binds block wildcard binds on Linux) -> caddy binds SPECIFIC host IPs
+# - tigerbeetle needs io_uring (blocked by default seccomp)
+# - TB/minio images: ghcr/daocloud pulls retagged locally (mirror gaps)
+# - memory caps: co-location discipline, keep the stack bounded
 name: company
 services:
   caddy:
     ports: !override
-      - "443:443"
-      - "443:443/udp"
+      - "10.1.0.12:443:443"
+      - "10.1.0.12:443:443/udp"
+      - "[2402:4e00:c011:2700:242a:610a:7a8a:0]:443:443"
+      - "[2402:4e00:c011:2700:242a:610a:7a8a:0]:443:443/udp"
+  tigerbeetle:
+    security_opt: ["seccomp:unconfined"]
+    mem_limit: 400m
+  tb-init:
+    security_opt: ["seccomp:unconfined"]
+  gateway:
+    image: cloudcrane/gateway:0.1.2
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      KERNEL_PG_DSN: postgresql://kernel:${KERNEL_PG_PASSWORD}@pg:5432/company
+      OPA_URL: http://opa:8181
+    depends_on:
+      pg: { condition: service_healthy }
+      opa: { condition: service_started }
+  clickhouse:
+    mem_limit: 1g
+  kafka:
+    mem_limit: 1g
+  langfuse-web:
+    mem_limit: 1536m
+  langfuse-worker:
+    mem_limit: 768m
+  litellm:
+    mem_limit: 512m
