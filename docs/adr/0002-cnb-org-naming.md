@@ -16,3 +16,8 @@ either a one-way mirror (re-point the pipeline) or a small template repo.
 - Mirror URLs reference Cloudbird-Software; tracked here and in .cnb.yml files.
 - The old-name association is a naming residue only; all legacy repos were
   deleted (22 repos, audited list) and credentials are scoped tokens.
+
+## Ratification
+
+**RATIFIED by the owner, 2026-09-17** — Cloudbird-Software remains the CNB namespace
+until quota reset; re-evaluation triggers unchanged.
