@@ -46,7 +46,7 @@ services:
   langfuse-web:
     mem_limit: 1536m
     healthcheck: !override
-      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/public/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
+      test: ["CMD-SHELL", "node -e \"fetch('http://'+process.env.HOSTNAME+':3000/api/public/health')  # langfuse binds the container IP, not loopback.then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
       interval: 20s
       timeout: 8s
       retries: 12
