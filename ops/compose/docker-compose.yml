@@ -386,6 +386,26 @@ services:
   #     pg: { condition: service_healthy }
   #     opa: { condition: service_started }
 
+  # -------------------------------------------- Restate audit export (WO-0001)
+  # Polls the Restate admin API, publishes invocation audit events to Kafka
+  # audit-events, and upserts them into PG audit_events (replayable).
+  # Image built from the kernel repo deploy/audit-export.Dockerfile:
+  #   docker build -f deploy/audit-export.Dockerfile -t cloudcrane/audit-export:0.1.0 .
+  # Uncomment when the image is pushed to the registry (internal only, no ports).
+  # audit-export:
+  #   image: cloudcrane/audit-export:0.1.0
+  #   restart: unless-stopped
+  #   logging: *default-logging
+  #   environment:
+  #     RESTATE_ADMIN_URL: http://restate:9070
+  #     KAFKA_BOOTSTRAP: kafka:9092
+  #     KERNEL_PG_DSN: postgresql://kernel:${KERNEL_PG_PASSWORD}@pg:5432/company
+  #     AUDIT_POLL_INTERVAL: 10s
+  #   depends_on:
+  #     pg: { condition: service_healthy }
+  #     kafka: { condition: service_healthy }
+  #     restate: { condition: service_started }
+
 volumes:
   caddy_data:
   caddy_config:
