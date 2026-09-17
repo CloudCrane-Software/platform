@@ -2,9 +2,13 @@
 # - host nginx owns :80 -> caddy 443 only (ACME TLS-ALPN-01)
 # - host loopback :443 is held by hf-sni-router (127.0.0.1/[::1] specific
 #   binds block wildcard binds on Linux) -> caddy binds SPECIFIC host IPs
-# - tigerbeetle needs io_uring (blocked by default seccomp)
+# - tigerbeetle needs io_uring (blocked by default seccomp) and preallocates
+#   a 1GiB journal at boot -> 2g cap (400m was an OOM restart loop)
 # - TB/minio images: ghcr/daocloud pulls retagged locally (mirror gaps)
 # - memory caps: co-location discipline, keep the stack bounded
+# - healthchecks use image-native runtimes (litellm has python3, langfuse has
+#   node; NEITHER ships curl — the stock curl checks were permanent false
+#   negatives)
 name: company
 services:
   caddy:
@@ -15,7 +19,7 @@ services:
       - "[2402:4e00:c011:2700:242a:610a:7a8a:0]:443:443/udp"
   tigerbeetle:
     security_opt: ["seccomp:unconfined"]
-    mem_limit: 400m
+    mem_limit: 2g
   tb-init:
     security_opt: ["seccomp:unconfined"]
   gateway:
@@ -32,9 +36,19 @@ services:
     mem_limit: 1g
   kafka:
     mem_limit: 1g
-  langfuse-web:
-    mem_limit: 1536m
-  langfuse-worker:
-    mem_limit: 768m
   litellm:
     mem_limit: 512m
+    healthcheck: !override
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=5)\""]
+      interval: 20s
+      timeout: 8s
+      retries: 10
+  langfuse-web:
+    mem_limit: 1536m
+    healthcheck: !override
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/public/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
+      interval: 20s
+      timeout: 8s
+      retries: 12
+  langfuse-worker:
+    mem_limit: 768m
