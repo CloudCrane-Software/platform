@@ -13,9 +13,9 @@
 
 # --- Action gateway (kernel Chapter 5) ---------------------------------
 # Uncomment after gateway container is deployed (WO-03).
-# api.{$DOMAIN} {
-# 	reverse_proxy gateway:8000
-# }
+api.{$DOMAIN} {
+	reverse_proxy gateway:8000
+}
 
 # --- OpenBao (secrets + transit signing) --------------------------------
 bao.{$DOMAIN} {
@@ -43,4 +43,10 @@ langfuse.{$DOMAIN} {
 # --- Restate (workflow engine, admin/ingress) ---------------------------
 restate.{$DOMAIN} {
 	reverse_proxy restate:8080
+}
+
+# --- 海南明大教育官网（客户站点，静态 SPA 由宿主 nginx :80 提供）----------
+# 静态资源与拉起脚本在 /var/www/mingda-site；nginx 见 /etc/nginx/conf.d/mingda.conf
+hkmingdajiaoyu.com, www.hkmingdajiaoyu.com {
+	reverse_proxy 10.1.0.12:80
 }
