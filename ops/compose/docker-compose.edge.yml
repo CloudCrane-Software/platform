@@ -3,7 +3,7 @@
 # - host loopback :443 is held by hf-sni-router (127.0.0.1/[::1] specific
 #   binds block wildcard binds on Linux) -> caddy binds SPECIFIC host IPs
 # - tigerbeetle needs io_uring (blocked by default seccomp) and preallocates
-#   a 1GiB journal at boot -> 2g cap (400m was an OOM restart loop)
+#   a 1GiB journal at boot -> 4g cap (aligned with live docker update 2026-09-19; 400m was an OOM restart loop)
 # - TB/minio images: ghcr/daocloud pulls retagged locally (mirror gaps)
 # - memory caps: co-location discipline, keep the stack bounded
 # - healthchecks use image-native runtimes (litellm has python3, langfuse has
@@ -13,13 +13,13 @@ name: company
 services:
   caddy:
     ports: !override
-      - "10.1.0.12:443:443"
-      - "10.1.0.12:443:443/udp"
-      - "[2402:4e00:c011:2700:242a:610a:7a8a:0]:443:443"
-      - "[2402:4e00:c011:2700:242a:610a:7a8a:0]:443:443/udp"
+      - "${EDGE_IPV4}:443:443"
+      - "${EDGE_IPV4}:443:443/udp"
+      - "[${EDGE_IPV6}]:443:443"
+      - "[${EDGE_IPV6}]:443:443/udp"
   tigerbeetle:
     security_opt: ["seccomp:unconfined"]
-    mem_limit: 2g
+    mem_limit: 4g
   tb-init:
     security_opt: ["seccomp:unconfined"]
   gateway:
@@ -46,9 +46,22 @@ services:
   langfuse-web:
     mem_limit: 1536m
     healthcheck: !override
-      test: ["CMD-SHELL", "node -e \"fetch('http://'+process.env.HOSTNAME+':3000/api/public/health')  # langfuse binds the container IP, not loopback.then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
+      test: ["CMD-SHELL", "node -e \"fetch('http://'+process.env.HOSTNAME+':3000/api/public/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
       interval: 20s
       timeout: 8s
       retries: 12
   langfuse-worker:
     mem_limit: 768m
+  audit-export:
+    image: cloudcrane/audit-export:0.1.0
+    restart: unless-stopped
+    mem_limit: 256m
+    environment:
+      RESTATE_ADMIN_URL: http://restate:9070
+      KAFKA_BOOTSTRAP: kafka:9092
+      KERNEL_PG_DSN: postgresql://kernel:${KERNEL_PG_PASSWORD}@pg:5432/company
+      AUDIT_POLL_INTERVAL: "10"
+    depends_on:
+      pg: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      restate: { condition: service_started }
