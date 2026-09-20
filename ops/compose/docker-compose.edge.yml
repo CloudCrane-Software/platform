@@ -30,6 +30,36 @@ services:
       KERNEL_PG_DSN: postgresql://kernel:${KERNEL_PG_PASSWORD}@pg:5432/company
       OPA_URL: http://opa:8181
       KERNEL_ADMIN_TOKEN: ${KERNEL_ADMIN_TOKEN}
+      # --- WO-101 reconciler external adapters (real-system eval config) ---
+      # Endpoint/namespace values live in .env (see the WO101_* block in
+      # .env.example); names are read by reconciler/external/config.py.
+      WO101_REDIS_ADDR: ${WO101_REDIS_ADDR}
+      WO101_REDIS_DB: ${WO101_REDIS_DB}
+      WO101_REDIS_PREFIX: ${WO101_REDIS_PREFIX}
+      WO101_CLICKHOUSE_URL: ${WO101_CLICKHOUSE_URL}
+      WO101_CLICKHOUSE_TABLE: ${WO101_CLICKHOUSE_TABLE}
+      WO101_MINIO_ENDPOINT: ${WO101_MINIO_ENDPOINT}
+      WO101_MINIO_BUCKET: ${WO101_MINIO_BUCKET}
+      WO101_ZOT_URL: ${WO101_ZOT_URL}
+      WO101_ZOT_REPO: ${WO101_ZOT_REPO}
+      WO101_LITELLM_URL: ${WO101_LITELLM_URL}
+      WO101_LITELLM_ALIAS_PREFIX: ${WO101_LITELLM_ALIAS_PREFIX}
+      WO101_LANGFUSE_URL: ${WO101_LANGFUSE_URL}
+      WO101_LANGFUSE_TRACE_NAME: ${WO101_LANGFUSE_TRACE_NAME}
+      # Credential passthrough — existing .env variable names only, no new
+      # plaintext (same names the langfuse-worker service already uses).
+      REDIS_AUTH: ${REDIS_AUTH}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      ZOT_USER: ${ZOT_USER}
+      ZOT_PASSWORD: ${ZOT_PASSWORD}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
     depends_on:
       pg: { condition: service_healthy }
       opa: { condition: service_started }
