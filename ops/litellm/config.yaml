@@ -1,15 +1,82 @@
 # LiteLLM proxy config — server-side live channels (secrets via .env env).
 # Usage recording: every completion is traced to Langfuse (project governance).
+#
+# WO-103 (M2 final plan sec 3.3): weekly budget windows for every plan in the
+# pricing repo's subscriptions.yaml, LiteLLM->Langfuse success callback wiring
+# (scope extension, master ruling 2026-09-20), and an eval-only mock channel
+# pair for the budget-exhaustion failover demo (suite G2).
+#
+# WO-103 G1 anchor — plan registry. This comment line is the machine-readable
+# plan id set; it MUST stay equal to the pricing repo subscriptions.yaml
+# plans[].plan_id set (suite wo103-litellm-budget G1 diffs the two).
+# wo103-plans: [default-conservative]
 model_list:
+  # Production channel — default route, unchanged by WO-103.
   - model_name: stepfun
     litellm_params:
       model: openai/step-3.7-flash
       api_base: https://api.stepfun.com/step_plan/v1
       api_key: os.environ/STEPFUN_API_KEY
+
+  # --- WO-103 eval-only mock channel pair (suite G2 failover demo) ---------
+  # These exist ONLY for the eval environment / isolated demo key+team
+  # (wo103-demo). Nothing routes to them by default; production routing
+  # semantics are unchanged. mock_response short-circuits before any network
+  # call, so no real spend and no real upstream is ever contacted. The
+  # api_key values below are inert placeholder strings (mock calls never use
+  # credentials), not secrets.
+  - model_name: wo103-mock-primary
+    litellm_params:
+      model: openai/wo103-mock-primary
+      api_base: https://wo103-mock.invalid/v1 # never reached (mock_response)
+      api_key: mock-placeholder-not-a-credential
+      mock_response: "wo103 mock primary ok"
+  - model_name: wo103-mock-fallback
+    litellm_params:
+      model: openai/wo103-mock-fallback
+      api_base: https://wo103-mock.invalid/v1 # never reached (mock_response)
+      api_key: mock-placeholder-not-a-credential
+      mock_response: "wo103 mock fallback hit"
+
 litellm_settings:
   drop_params: true
   num_retries: 2
   request_timeout: 120
+  # WO-103 scope extension (master ruling 2026-09-20): wire the Langfuse
+  # success callback so every completion is recorded (B#5 14-day usage
+  # records need real data; WO-102 first daily report measured zero events
+  # with no callback wired). Key names only — values live in compose .env
+  # (LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST are already
+  # passed to the litellm service in ops/compose/docker-compose.yml, so no
+  # compose change is needed). Naming note: litellm 1.26.13 expects the
+  # singular `success_callback` key here; the plural `callbacks` key only
+  # exists in later litellm versions (verified against the deployed image's
+  # proxy_server.py).
+  success_callback: ["langfuse"]
+  # WO-103 weekly budget window for the plan set registered in the
+  # `# wo103-plans:` anchor above. LiteLLM 1.26.13 exposes budgets at proxy
+  # level via max_budget + budget_duration here (per-team/per-key budgets
+  # are a DB/API mechanism in this version, not configurable in yaml).
+  # budget_duration supports s/m/h/d units only (no 'w' — verified in the
+  # deployed image's utils.py _duration_in_seconds), so weekly == 7d.
+  # max_budget mirrors subscriptions.yaml weekly_limit_usd summed over the
+  # active plan set; with the single active plan default-conservative
+  # (weekly_limit_usd: 10) the proxy-level weekly budget IS the plan budget.
+  # When more plans are added, each gets its own budget entry here and the
+  # anchor set + this section are updated in the same PR (G1 guards equality).
+  max_budget: 10
+  budget_duration: 7d # one week (litellm has no 'w' unit; 7d == weekly)
+
+router_settings:
+  # WO-103 suite G2 failover chain for the eval-only mock pair above.
+  # fallbacks fire only when a model call raises (quota/connection errors);
+  # the production stepfun route is untouched. Eval demo flow: the mock
+  # primary's quota is set to a minimal value in the eval environment,
+  # requests beyond the quota raise 429 at the channel, and the router
+  # auto-switches to wo103-mock-fallback so every client request still
+  # succeeds (verified against litellm 1.26.13 in-container).
+  fallbacks: [{ "wo103-mock-primary": ["wo103-mock-fallback"] }]
+
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL
