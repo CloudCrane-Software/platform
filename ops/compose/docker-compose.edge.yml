@@ -23,7 +23,7 @@ services:
   tb-init:
     security_opt: ["seccomp:unconfined"]
   gateway:
-    image: cloudcrane/gateway:0.1.4
+    image: cloudcrane/gateway:0.1.5
     restart: unless-stopped
     mem_limit: 512m
     environment:
@@ -54,7 +54,7 @@ services:
   langfuse-worker:
     mem_limit: 768m
   audit-export:
-    image: cloudcrane/audit-export:0.1.0
+    image: cloudcrane/audit-export:0.2.0
     restart: unless-stopped
     mem_limit: 256m
     environment:
