@@ -99,3 +99,43 @@ services:
       pg: { condition: service_healthy }
       kafka: { condition: service_healthy }
       restate: { condition: service_started }
+
+  # ------------------------------------------- Work-order watcher (batch D) --
+  # Resident mandates poller (kernel main 59c066d, kernel/watcher/): fetches
+  # the mounted mandates clone, seeds an episode per new OPEN work order via
+  # the action gateway (POST /v1/workorders, idempotent) and writes one
+  # dispatch JSON into the dispatch volume for the external development
+  # agent. First cycle is a baseline sweep (records history, dispatches
+  # nothing). Image built from the kernel repo deploy/watcher.Dockerfile:
+  #   docker build -f deploy/watcher.Dockerfile -t cloudcrane/watcher:0.1.0 .
+  # Bring-up is OWNER-GATED (it seeds episodes autonomously):
+  #   mkdir -p /opt/company/watcher/{dispatch,state}
+  #   docker compose -f docker-compose.yml -f docker-compose.edge.yml up -d watcher
+  watcher:
+    image: cloudcrane/watcher:0.1.0
+    restart: unless-stopped
+    mem_limit: 256m
+    environment:
+      KERNEL_ADMIN_TOKEN: ${KERNEL_ADMIN_TOKEN}  # gateway bearer (config alias)
+      WATCHER_GATEWAY_URL: http://gateway:8000
+      WATCHER_MANDATES_DIR: /work/mandates
+      WATCHER_EVALGATE_DIR: /work/evalgate
+      WATCHER_DISPATCH_DIR: /work/dispatch
+      WATCHER_STATE_PATH: /work/state/state.json
+      WATCHER_POLL_INTERVAL: "60"
+      # safety pin: first run records the historical work orders without
+      # dispatching; flipping this off on an empty ledger would re-open them
+      WATCHER_BASELINE_ON_FIRST_RUN: "true"
+    volumes:
+      # rw: the watcher `git fetch`es INTO the mounted clone; tree reads go
+      # against FETCH_HEAD, the working copy is never touched
+      - /root/company/cnb-staging/mandates:/work/mandates
+      - /root/company/cnb-staging/eval-gate:/work/evalgate:ro
+      - /opt/company/watcher/dispatch:/work/dispatch
+      - /opt/company/watcher/state:/work/state
+      # alert-notify.sh reads ALERT_WEBHOOK_URL from this exact path (its
+      # host contract); inside the container absent -> log-only delivery
+      - ./.env:/opt/company/platform/ops/compose/.env:ro
+      - ../scripts/alert-notify.sh:/usr/local/bin/alert-notify.sh:ro
+    depends_on:
+      gateway: { condition: service_started }
