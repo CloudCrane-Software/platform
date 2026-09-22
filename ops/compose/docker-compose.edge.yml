@@ -23,13 +23,16 @@ services:
   tb-init:
     security_opt: ["seccomp:unconfined"]
   gateway:
-    image: cloudcrane/gateway:0.1.7
+    image: cloudcrane/gateway:0.1.8
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # isolated lane: RunscRunner launches runsc containers
     restart: unless-stopped
     mem_limit: 512m
     environment:
       KERNEL_PG_DSN: postgresql://kernel:${KERNEL_PG_PASSWORD}@pg:5432/company
       OPA_URL: http://opa:8181
       KERNEL_ADMIN_TOKEN: ${KERNEL_ADMIN_TOKEN}
+      KERNEL_RUNSC_ENABLED: "1"  # isolated lane host assertion (WO-108)
       # --- WO-101 reconciler external adapters (real-system eval config) ---
       # Endpoint/namespace values live in .env (see the WO101_* block in
       # .env.example); names are read by reconciler/external/config.py.
